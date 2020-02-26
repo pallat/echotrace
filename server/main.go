@@ -6,6 +6,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/pallat/echotrace/prophttp"
 
 	"go.opentelemetry.io/otel/api/distributedcontext"
 	"go.opentelemetry.io/otel/api/global"
@@ -41,9 +42,11 @@ func main() {
 	// Middleware
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
+	e.Use(TraceMiddleware)
 
 	// Routes
-	e.GET("/", hello, TraceMiddleware)
+	e.GET("/", hello)
+	e.GET("/handler", Handler)
 
 	// Start server
 	e.Logger.Fatal(e.Start(":1323"))
@@ -64,16 +67,24 @@ func TraceMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 			MultiKV: entries,
 		})))
 
-		ctx, span := tr.Start(
+		_, span := tr.Start(
 			req.Context(),
-			"hello",
+			"server",
 			trace.WithAttributes(attrs...),
 			trace.ChildOf(spanCtx),
 		)
 		defer span.End()
 
-		span.AddEvent(ctx, "handling this...")
+		c.SetRequest(req.WithContext(trace.ContextWithSpan(req.Context(), span)))
 
 		return next(c)
 	}
+}
+
+func Handler(c echo.Context) error {
+	client := prophttp.NewClientWithContext("example/server")
+	req, _ := prophttp.NewRequestWithContext(c.Request().Context(), http.MethodGet, "http://localhost:7777/", nil)
+
+	client.Do(c.Request().Context(), req)
+	return nil
 }
